@@ -1,0 +1,103 @@
+Librebooting notes
+Contact: madars@mit.edu
+
+===============================================================================
+
+Public keys:
+
+$ gpg --verify libreboot_src.tar.xz.sig libreboot_src.tar.xz
+gpg: Signature made Sun 08 Feb 2015 10:22:14 AM EST using RSA key ID 656F212E
+gpg: Good signature from "Libreboot Releases (signing key) <releases@libreboot.org>"
+gpg: WARNING: This key is not certified with a trusted signature!
+gpg:          There is no indication that the signature belongs to the owner.
+Primary key fingerprint: C923 4BA3 200C F688 9CC0  764D 6E97 D575 656F 212E
+
+===============================================================================
+
+Dependencies:
+
+sudo apt-get install build-essential libpci-dev libc6-dev-i386 unifont iasl bison flex
+
+===============================================================================
+
+You first want to fix coreboot/Makefile.inc so that it works with a tarball (not just git checkout):
+
+--- libreboot_src/coreboot/Makefile.inc 2015-02-07 22:50:57.000000000 -0500
++++ libreboot_src/coreboot/Makefile.inc 2015-04-12 20:45:26.312825911 -0400
+@@ -267,13 +267,8 @@
+        printf "#ifndef __BUILD_H\n" >> $(obj)/build.ht
+        printf "#define __BUILD_H\n\n" >> $(obj)/build.ht
+        printf "#define COREBOOT_VERSION \"$(KERNELVERSION)\"\n" >> $(obj)/build.ht
+-       if git update-index -q --refresh >/dev/null; ! git diff-index --quiet HEAD; then \
+-          printf "/* `LANG= TZ=UTC git log --date=local --pretty=format:%cd -1` UTC */\n" >> $(obj)/build.ht; \
+-          printf "#define COREBOOT_VERSION_TIMESTAMP `LANG= git log --pretty=format:%ct -1`\n" >> $(obj)/build.ht; \
+-       else \
+-          printf "/* `LANG= TZ=UTC date` */\n" >> $(obj)/build.ht; \
+-          printf "#define COREBOOT_VERSION_TIMESTAMP `LANG= date +%s`\n" >> $(obj)/build.ht; \
+-        fi
++       printf "/* `LANG= TZ=UTC date` */\n" >> $(obj)/build.ht; \
++       printf "#define COREBOOT_VERSION_TIMESTAMP `LANG= date +%s`\n" >> $(obj)/build.ht; \
+        printf "#define COREBOOT_ORIGIN_GIT_REVISION \"`LANG= git log remotes/origin/master -1 --format=format:%h`\"\n" >> $(obj)/build.ht
+        printf "#define COREBOOT_EXTRA_VERSION \"$(COREBOOT_EXTRA_VERSION)\"\n" >> $(obj)/build.ht
+        printf "#define COREBOOT_BUILD \"`LANG= date`\"\n" >> $(obj)/build.ht
+
+===============================================================================
+
+./builddeps # build dependencies (including gcc, takes a while)
+./build # build the thing
+
+# ./build-all runs both, but also does ./cleandeps, so beware of slow gcc compilation
+
+===============================================================================
+
+Fixing MAC address (burned in ROM):
+
+./ich9macchange 12:34:56:78:9A:BC # does this for all images
+
+===============================================================================
+
+Add SeaBIOS. The official script is broken, so we will do that manually.
+
+rom=bin/x200_4mb/x200_4mb_usqwerty_vesafb.rom # 4mb for asuhl, 8mb for madars
+
+coreboot/build/cbfstool $rom add -f seabios/out/vgabios.bin -n vgaroms/vgabios.bin -t raw
+coreboot/build/cbfstool $rom add -f seabios/out/bios.bin.elf -n bios.bin.elf -t raw
+
+coreboot/build/cbfstool $rom extract -n grub.cfg -f grub.cfg
+coreboot/build/cbfstool $rom extract -n grubtest.cfg -f grubtest.cfg
+
+coreboot/build/cbfstool $rom remove -n grub.cfg
+coreboot/build/cbfstool $rom remove -n grubtest.cfg
+
+cat resources/grub/config/seabios.cfg >> grub.cfg
+cat resources/grub/config/seabios.cfg >> grubtest.cfg
+
+coreboot/build/cbfstool $rom add -n grub.cfg -f grub.cfg -t raw
+coreboot/build/cbfstool $rom add -n grubtest.cfg -f grubtest.cfg -t raw
+
+===============================================================================
+
+Flashing from BeagleBoard
+
+ssh 192.168.7.2 -l root
+# echo BB-SPI0-01 > /sys/devices/bone_capemgr.*/slots
+
+Testing:
+
+# ../flashrom -p linux_spi:dev=/dev/spidev1.0,spispeed=512
+flashrom v0.9.7-unknown on Linux 3.8.13-bone47 (armv7l)
+flashrom is free software, get the source code at http://www.flashrom.org
+
+Calibrating delay loop... OK.
+Found Winbond flash chip "W25X64" (8192 kB, SPI) on linux_spi.
+
+# ../flashrom -p linux_spi:dev=/dev/spidev1.0,spispeed=512 -r factory.rom
+(do it 3 times and compare)
+
+Then when you are satisfied do -w new.rom, do reads again and compare :-)
+
+===============================================================================
+
+Upgrading the target:
+
+The same as BeagleBoard, but use -p internal.
